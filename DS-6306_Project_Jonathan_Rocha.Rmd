@@ -671,6 +671,10 @@ legend("bottomright", legend = c("KNN", "Naive Bayes", "Random Forest", "Gradien
 ## Optimizing the Gradient Boosting Model
 
 ```{r gbm_optimization}
+# First, make sure we have the gbm predictions with probabilities
+# Use your gbm_model instead of gbm_simple
+gbm_simple_probs <- predict(gbm_model, test_data_processed, type = "prob")
+
 # Optimize prediction threshold for better sensitivity/specificity balance
 thresholds <- seq(0.1, 0.9, by = 0.05)
 results <- data.frame(
@@ -721,8 +725,9 @@ if(nrow(valid_thresholds) > 0) {
   gbm_final_cm <- final_cm
 } else {
   cat("No threshold found that gives at least 60% for both sensitivity and specificity.\n")
-  # Use the original confusion matrix
-  gbm_final_cm <- gbm_simple_cm
+  # Use the original confusion matrix - this also needs to be defined earlier
+  # If you don't have gbm_simple_cm defined, use gbm_cm instead
+  gbm_final_cm <- gbm_cm  # Make sure this exists or change to the correct variable
 }
 ```
 
