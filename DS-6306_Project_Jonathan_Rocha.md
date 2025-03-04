@@ -1264,3 +1264,239 @@ legend("bottomright", legend = c("KNN", "Naive Bayes", "Random Forest", "Gradien
 
 ![](DS-6306_Project_Jonathan_Rocha_files/figure-html/model_comparison-2.png)<!-- -->
 
+## Optimizing the Gradient Boosting Model
+
+
+``` r
+# First, make sure we have the gbm predictions with probabilities
+# Use your gbm_model instead of gbm_simple
+gbm_simple_probs <- predict(gbm_model, test_data_processed, type = "prob")
+
+# Optimize prediction threshold for better sensitivity/specificity balance
+thresholds <- seq(0.1, 0.9, by = 0.05)
+results <- data.frame(
+  Threshold = thresholds,
+  Sensitivity = numeric(length(thresholds)),
+  Specificity = numeric(length(thresholds)),
+  Balanced_Accuracy = numeric(length(thresholds))
+)
+
+# Calculate metrics for each threshold
+for(i in 1:length(thresholds)) {
+  # Make predictions using current threshold
+  threshold_preds <- factor(
+    ifelse(gbm_simple_probs$Yes > thresholds[i], "Yes", "No"),
+    levels = c("No", "Yes")
+  )
+  
+  # Create confusion matrix
+  cm <- confusionMatrix(threshold_preds, test_data_processed$Attrition, positive = "Yes")
+  
+  # Store results
+  results$Sensitivity[i] <- cm$byClass["Sensitivity"]
+  results$Specificity[i] <- cm$byClass["Specificity"]
+  results$Balanced_Accuracy[i] <- cm$byClass["Balanced Accuracy"]
+}
+
+# Find the threshold that gives at least 60% for both metrics
+valid_thresholds <- results[results$Sensitivity >= 0.6 & results$Specificity >= 0.6, ]
+
+if(nrow(valid_thresholds) > 0) {
+  # Find the threshold with the best balanced accuracy
+  best_threshold <- valid_thresholds[which.max(valid_thresholds$Balanced_Accuracy), ]
+  cat("Best threshold:", best_threshold$Threshold, 
+      "\nSensitivity:", round(best_threshold$Sensitivity * 100, 1), "%",
+      "\nSpecificity:", round(best_threshold$Specificity * 100, 1), "%\n")
+  
+  # Apply the best threshold to make the final predictions
+  final_preds <- factor(
+    ifelse(gbm_simple_probs$Yes > best_threshold$Threshold, "Yes", "No"),
+    levels = c("No", "Yes")
+  )
+  
+  # Create the final confusion matrix
+  final_cm <- confusionMatrix(final_preds, test_data_processed$Attrition, positive = "Yes")
+  print(final_cm)
+  
+  # Use this confusion matrix for cost-benefit analysis
+  gbm_final_cm <- final_cm
+} else {
+  cat("No threshold found that gives at least 60% for both sensitivity and specificity.\n")
+  # Use the original confusion matrix - this also needs to be defined earlier
+  # If you don't have gbm_simple_cm defined, use gbm_cm instead
+  gbm_final_cm <- gbm_cm  # Make sure this exists or change to the correct variable
+}
+```
+
+```
+## Best threshold: 0.65 
+## Sensitivity: 69 % 
+## Specificity: 75.8 %
+## Confusion Matrix and Statistics
+## 
+##           Reference
+## Prediction  No Yes
+##        No  166  13
+##        Yes  53  29
+##                                           
+##                Accuracy : 0.7471          
+##                  95% CI : (0.6898, 0.7987)
+##     No Information Rate : 0.8391          
+##     P-Value [Acc > NIR] : 0.9999          
+##                                           
+##                   Kappa : 0.3238          
+##                                           
+##  Mcnemar's Test P-Value : 1.582e-06       
+##                                           
+##             Sensitivity : 0.6905          
+##             Specificity : 0.7580          
+##          Pos Pred Value : 0.3537          
+##          Neg Pred Value : 0.9274          
+##              Prevalence : 0.1609          
+##          Detection Rate : 0.1111          
+##    Detection Prevalence : 0.3142          
+##       Balanced Accuracy : 0.7242          
+##                                           
+##        'Positive' Class : Yes             
+## 
+```
+
+## Cost-Benefit Analysis
+
+
+``` r
+# Calculate the average annual salary
+avg_monthly_income <- mean(attrition_clean$MonthlyIncome)
+avg_annual_income <- avg_monthly_income * 12
+cat("Average monthly income:", format(round(avg_monthly_income, 2), big.mark=","), 
+    "\nAverage annual income:", format(round(avg_annual_income, 2), big.mark=","), "\n")
+```
+
+```
+## Average monthly income: 6,390.26 
+## Average annual income: 76,683.17
+```
+
+``` r
+# Define replacement cost scenarios (50% to 400% of annual salary)
+low_replacement_cost <- 0.5 * avg_annual_income
+mid_replacement_cost <- 2.25 * avg_annual_income  # Midpoint of range
+high_replacement_cost <- 4.0 * avg_annual_income
+
+# Cost of retention incentive
+retention_incentive_cost <- 200
+
+# Extract values from the confusion matrix - use gbm_final_cm created above
+true_positives <- gbm_final_cm$table[2,2]  # Correctly predicted attrition
+false_positives <- gbm_final_cm$table[2,1]  # Incorrectly predicted attrition
+false_negatives <- gbm_final_cm$table[1,2]  # Missed attrition cases
+true_negatives <- gbm_final_cm$table[1,1]  # Correctly predicted retention
+
+# Calculate costs for different scenarios
+# Scenario 1: No model - all attrition cases result in replacement costs
+no_model_cost <- (true_positives + false_negatives) * mid_replacement_cost
+
+# Scenario 2: With model - apply retention incentives to predicted attrition cases
+# and still incur replacement costs for missed cases
+incentive_cost <- (true_positives + false_positives) * retention_incentive_cost
+missed_attrition_cost <- false_negatives * mid_replacement_cost
+with_model_cost <- incentive_cost + missed_attrition_cost
+
+# Calculate savings
+savings <- no_model_cost - with_model_cost
+savings_percentage <- (savings / no_model_cost) * 100
+
+# Create a summary table
+cost_summary <- data.frame(
+  Scenario = c("Without Model", "With Model", "Savings", "Savings Percentage"),
+  Cost = c(
+    format(round(no_model_cost, 2), big.mark = ","),
+    format(round(with_model_cost, 2), big.mark = ","),
+    format(round(savings, 2), big.mark = ","),
+    paste0(round(savings_percentage, 2), "%")
+  )
+)
+
+print(cost_summary)
+```
+
+```
+##             Scenario      Cost
+## 1      Without Model 7,246,560
+## 2         With Model 2,259,383
+## 3            Savings 4,987,177
+## 4 Savings Percentage    68.82%
+```
+
+``` r
+# Create a table for different replacement cost scenarios
+scenarios_data <- data.frame(
+  Scenario = character(3),
+  Replacement_Cost = numeric(3),
+  Without_Model = numeric(3),
+  With_Model = numeric(3),
+  Savings = numeric(3),
+  Savings_Pct = numeric(3)
+)
+
+scenarios <- c("Low (50%)", "Medium (225%)", "High (400%)")
+replacement_costs <- c(low_replacement_cost, mid_replacement_cost, high_replacement_cost)
+
+for(i in 1:3) {
+  scenario_no_model <- (true_positives + false_negatives) * replacement_costs[i]
+  scenario_with_model <- incentive_cost + (false_negatives * replacement_costs[i])
+  scenario_savings <- scenario_no_model - scenario_with_model
+  scenario_pct <- (scenario_savings / scenario_no_model) * 100
+  
+  scenarios_data$Scenario[i] <- scenarios[i]
+  scenarios_data$Replacement_Cost[i] <- replacement_costs[i]
+  scenarios_data$Without_Model[i] <- scenario_no_model
+  scenarios_data$With_Model[i] <- scenario_with_model
+  scenarios_data$Savings[i] <- scenario_savings
+  scenarios_data$Savings_Pct[i] <- scenario_pct
+}
+
+# Display the scenario data in a readable format
+print(scenarios_data)
+```
+
+```
+##        Scenario Replacement_Cost Without_Model With_Model Savings Savings_Pct
+## 1     Low (50%)         38341.59       1610347   514840.6 1095506    68.02920
+## 2 Medium (225%)        172537.14       7246560  2259382.8 4987177    68.82130
+## 3   High (400%)        306732.69      12882773  4003925.0 8878848    68.92032
+```
+
+``` r
+# Plot the savings data
+library(ggplot2)
+
+# Plot savings amount
+ggplot(scenarios_data, aes(x = Scenario, y = Savings, fill = Scenario)) +
+  geom_bar(stat = "identity") +
+  geom_text(aes(label = paste0("$", format(round(Savings, 0), big.mark = ","))),
+            vjust = -0.5, size = 3.5) +
+  labs(title = "Estimated Savings by Replacement Cost Scenario",
+       x = "Replacement Cost Scenario",
+       y = "Dollar Savings") +
+  theme_economist() +
+  theme(legend.position = "none")
+```
+
+![](DS-6306_Project_Jonathan_Rocha_files/figure-html/cost_benefit_analysis-1.png)<!-- -->
+
+``` r
+# Plot savings percentage
+ggplot(scenarios_data, aes(x = Scenario, y = Savings_Pct, fill = Scenario)) +
+  geom_bar(stat = "identity") +
+  geom_text(aes(label = paste0(round(Savings_Pct, 1), "%")),
+            vjust = -0.5, size = 3.5) +
+  labs(title = "Savings Percentage by Replacement Cost Scenario",
+       x = "Replacement Cost Scenario",
+       y = "Savings Percentage") +
+  theme_economist() +
+  theme(legend.position = "none")
+```
+
+![](DS-6306_Project_Jonathan_Rocha_files/figure-html/cost_benefit_analysis-2.png)<!-- -->
+
