@@ -1,0 +1,21 @@
+# R specific files
+.Rhistory
+.RData
+.Rproj.user/
+.Ruserdata
+
+# macOS specific files
+.DS_Store
+
+# Output files that can be regenerated
+*.html
+*.pdf
+# Uncomment the above if you don't want to track the output files
+
+# R Markdown cache
+*_cache/
+*_files/
+
+# Temporary files
+*.tmp
+*~

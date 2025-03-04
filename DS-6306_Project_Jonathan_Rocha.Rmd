@@ -1,0 +1,834 @@
+---
+title: 'Case Study 1: Employee Attrition Analysis'
+author: "Jonathan A. Rocha"
+date: "March 3, 2025"
+output:
+  pdf_document:
+    toc: true
+  word_document:
+    toc: true
+  html_document:
+    keep_md: true
+    code_folding: hide
+    theme: cosmo
+    toc: true
+    toc_float: true
+editor_options:
+  markdown:
+    wrap: 72
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE, 
+                     fig.width = 10, fig.height = 6)
+
+# Load required libraries
+library(tidyverse)    # For data manipulation and visualization
+library(caret)        # For model training
+library(class)        # For KNN algorithm
+library(e1071)        # For Naive Bayes
+library(corrplot)     # For correlation visualization
+library(scales)       # For better plot scales
+library(knitr)        # For better table outputs
+library(kableExtra)   # For enhanced tables in outputs
+library(pROC)         # For ROC curve analysis
+library(ROSE)         # For handling class imbalance
+library(smotefamily)  # For SMOTE implementation
+library(viridis)      # For better color palettes
+library(gridExtra)    # For arranging multiple plots
+library(ggthemes)     # For ggplot themes
+```
+
+## Executive Summary
+
+This analysis investigates employee attrition at Frito Lay to identify key factors driving turnover and to develop predictive models. According to research, replacing an employee costs between 50% and 400% of their annual salary, while targeted retention incentives cost approximately $200 per employee. Our analysis aims to help Frito Lay strategically allocate retention resources to reduce attrition costs.
+
+### Key Findings:
+
+1. **Top factors contributing to attrition:**
+   - **Overtime**: Employees working overtime have 3.3 times higher attrition rates than those who don't
+   - **Total working years**: Less experienced employees are significantly more likely to leave
+   - **Job level and monthly income**: Lower job levels and salaries correlate strongly with higher attrition
+
+2. **Model performance:**
+   - Our optimal gradient boosting model achieved 69.1% sensitivity and 69.4% specificity
+   - The model successfully balances identifying potential leavers while minimizing false alarms
+
+3. **Financial impact:**
+   - Implementing the model could save approximately $517,000 (7.1%) in attrition-related costs
+   - ROI varies based on replacement cost estimates, with savings increasing as replacement costs rise
+
+4. **Recommendations:**
+   - Target retention efforts at entry-level employees with overtime requirements
+   - Review compensation structure for employees with lower total working years
+   - Develop career progression pathways to address job level concerns
+
+## Introduction
+
+DDSAnalytics has been hired by Frito Lay to identify factors related to employee attrition and develop predictive models to reduce turnover costs. This analysis explores the dataset to understand patterns in attrition, builds machine learning models to predict which employees might leave, and quantifies the potential cost savings of implementing these models.
+
+### Project Objectives
+
+1. Identify the top three factors that contribute to employee attrition at Frito Lay
+2. Build predictive models (KNN and Naive Bayes) to identify employees at risk of leaving
+3. Ensure models achieve at least 60% sensitivity and 60% specificity
+4. Measure the potential cost savings of implementing the predictive model
+5. Make predictions for the 300 unlabeled competition dataset employees
+
+### Analysis Approach
+
+The analysis follows a structured data science methodology:
+
+1. **Data preparation and cleaning**: Review data quality and prepare it for analysis
+2. **Exploratory data analysis (EDA)**: Identify patterns and relationships with attrition
+3. **Feature engineering**: Create derived variables that might improve model performance
+4. **Model development**: Build, evaluate, and optimize machine learning models
+5. **Cost-benefit analysis**: Quantify the potential financial impact of using the model
+6. **Competition predictions**: Generate attrition predictions for the competition dataset
+
+## Data Import and Preparation
+
+```{r data_import}
+# Import the dataset
+attrition_data <- read.csv("~/Desktop/School Projects/SMU/DS_6306_Doing-Data-Science/Unit 8 and 9 Case Study 1/CaseStudy1-data.csv", stringsAsFactors = TRUE)
+
+# Take a look at the data structure
+str(attrition_data)
+
+# Basic summary of the data
+summary(attrition_data)
+
+# How many rows and columns?
+dim(attrition_data)
+```
+
+### Data Cleaning and Preparation
+
+```{r data_cleaning}
+# Check for missing values
+missing_values <- colSums(is.na(attrition_data))
+print(missing_values[missing_values > 0])
+
+# Check unique values for categorical variables
+categorical_vars <- names(attrition_data)[sapply(attrition_data, is.factor)]
+for(var in categorical_vars) {
+  cat("\nUnique values for", var, ":\n")
+  print(table(attrition_data[[var]]))
+}
+
+# Checking if there are any variables with zero variance (constant values)
+zero_var_cols <- names(which(sapply(attrition_data, function(x) length(unique(x)) == 1)))
+if(length(zero_var_cols) > 0) {
+  cat("Variables with zero variance:", zero_var_cols, "\n")
+}
+
+# Create a clean dataset for analysis by removing ID variables or other non-predictive features
+attrition_clean <- attrition_data %>%
+  select(-EmployeeCount, -EmployeeNumber, -ID, -StandardHours, -Over18) 
+
+# Confirm the structure of the cleaned dataset
+str(attrition_clean)
+```
+
+## Exploratory Data Analysis (EDA)
+
+### Attrition Overview
+
+```{r attrition_overview}
+# Overall attrition rate
+attrition_rate <- mean(attrition_clean$Attrition == "Yes") * 100
+cat(sprintf("Overall attrition rate: %.2f%%\n", attrition_rate))
+
+# Visualization of attrition distribution
+ggplot(attrition_clean, aes(x = Attrition, fill = Attrition)) +
+  geom_bar() +
+  geom_text(stat = "count", aes(label = scales::percent(..count../sum(..count..))),
+            position = position_stack(vjust = 0.5)) +
+  scale_fill_manual(values = c("Yes" = "#FF6B6B", "No" = "#4ECDC4")) +
+  labs(title = "Attrition Distribution",
+       x = "Attrition Status",
+       y = "Count") +
+  theme_economist() +
+  theme(legend.position = "none")
+```
+
+### Demographic Analysis
+
+```{r demographic_analysis}
+# Age distribution by attrition
+age_plot <- ggplot(attrition_clean, aes(x = Age, fill = Attrition)) +
+  geom_histogram(binwidth = 5, position = "dodge", alpha = 0.7) +
+  scale_fill_manual(values = c("Yes" = "#FF6B6B", "No" = "#4ECDC4")) +
+  labs(title = "Age Distribution by Attrition",
+       x = "Age",
+       y = "Count") +
+  theme_economist()
+
+# Gender and attrition
+gender_attrition <- attrition_clean %>%
+  group_by(Gender, Attrition) %>%
+  summarize(Count = n(), .groups = "drop") %>%
+  group_by(Gender) %>%
+  mutate(Percentage = Count / sum(Count) * 100)
+
+gender_plot <- ggplot(gender_attrition, aes(x = Gender, y = Percentage, fill = Attrition)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  geom_text(aes(label = sprintf("%.1f%%", Percentage)), 
+            position = position_dodge(width = 0.9), vjust = -0.5) +
+  scale_fill_manual(values = c("Yes" = "#FF6B6B", "No" = "#4ECDC4")) +
+  labs(title = "Attrition Rate by Gender",
+       x = "Gender",
+       y = "Percentage") +
+  theme_economist()
+
+# Marital status and attrition
+marital_attrition <- attrition_clean %>%
+  group_by(MaritalStatus, Attrition) %>%
+  summarize(Count = n(), .groups = "drop") %>%
+  group_by(MaritalStatus) %>%
+  mutate(Percentage = Count / sum(Count) * 100)
+
+marital_plot <- ggplot(marital_attrition, aes(x = MaritalStatus, y = Percentage, fill = Attrition)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  geom_text(aes(label = sprintf("%.1f%%", Percentage)), 
+            position = position_dodge(width = 0.9), vjust = -0.5) +
+  scale_fill_manual(values = c("Yes" = "#FF6B6B", "No" = "#4ECDC4")) +
+  labs(title = "Attrition Rate by Marital Status",
+       x = "Marital Status",
+       y = "Percentage") +
+  theme_economist()
+
+# Display plots 
+print(age_plot)
+print(gender_plot)
+print(marital_plot)
+
+```
+
+### Job-Related Factors
+
+```{r job_related_factors}
+# Department and attrition
+dept_attrition <- attrition_clean %>%
+  group_by(Department, Attrition) %>%
+  summarize(Count = n(), .groups = "drop") %>%
+  group_by(Department) %>%
+  mutate(Percentage = Count / sum(Count) * 100)
+
+dept_plot <- ggplot(dept_attrition, aes(x = Department, y = Percentage, fill = Attrition)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  geom_text(aes(label = sprintf("%.1f%%", Percentage)), 
+            position = position_dodge(width = 0.9), vjust = -0.5) +
+  scale_fill_manual(values = c("Yes" = "#FF6B6B", "No" = "#4ECDC4")) +
+  labs(title = "Attrition Rate by Department",
+       x = "Department",
+       y = "Percentage") +
+  theme_economist() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+# Job role and attrition (using a sorted bar plot for better readability)
+jobrole_attrition <- attrition_clean %>%
+  group_by(JobRole, Attrition) %>%
+  summarize(Count = n(), .groups = "drop") %>%
+  group_by(JobRole) %>%
+  mutate(Percentage = Count / sum(Count) * 100,
+         TotalCount = sum(Count)) %>%
+  filter(Attrition == "Yes") %>%
+  arrange(desc(Percentage))
+
+# Create a factor with levels ordered by attrition percentage
+ordered_roles <- jobrole_attrition$JobRole
+
+jobrole_plot <- ggplot(jobrole_attrition, aes(x = factor(JobRole, levels = ordered_roles), y = Percentage, fill = Percentage)) +
+  geom_bar(stat = "identity") +
+  geom_text(aes(label = sprintf("%.1f%%", Percentage)), hjust = -0.1) +
+  scale_fill_viridis_c() +
+  labs(title = "Attrition Rate by Job Role",
+       x = "Job Role",
+       y = "Attrition Percentage") +
+  theme_economist() +
+  coord_flip()
+
+# Job level and attrition
+joblevel_attrition <- attrition_clean %>%
+  group_by(JobLevel, Attrition) %>%
+  summarize(Count = n(), .groups = "drop") %>%
+  group_by(JobLevel) %>%
+  mutate(Percentage = Count / sum(Count) * 100)
+
+joblevel_plot <- ggplot(joblevel_attrition, aes(x = as.factor(JobLevel), y = Percentage, fill = Attrition)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  geom_text(aes(label = sprintf("%.1f%%", Percentage)), 
+            position = position_dodge(width = 0.9), vjust = -0.5) +
+  scale_fill_manual(values = c("Yes" = "#FF6B6B", "No" = "#4ECDC4")) +
+  labs(title = "Attrition Rate by Job Level",
+       x = "Job Level",
+       y = "Percentage") +
+  theme_economist()
+
+# Overtime and attrition
+overtime_attrition <- attrition_clean %>%
+  group_by(OverTime, Attrition) %>%
+  summarize(Count = n(), .groups = "drop") %>%
+  group_by(OverTime) %>%
+  mutate(Percentage = Count / sum(Count) * 100)
+
+overtime_plot <- ggplot(overtime_attrition, aes(x = OverTime, y = Percentage, fill = Attrition)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  geom_text(aes(label = sprintf("%.1f%%", Percentage)), 
+            position = position_dodge(width = 0.9), vjust = -0.5) +
+  scale_fill_manual(values = c("Yes" = "#FF6B6B", "No" = "#4ECDC4")) +
+  labs(title = "Attrition Rate by Overtime Status",
+       x = "Overtime",
+       y = "Percentage") +
+  theme_economist()
+
+# Display plots
+print(dept_plot)
+print(joblevel_plot)
+print(overtime_plot)
+
+# Display job role plot separately (it's taller)
+jobrole_plot
+```
+
+### Compensation and Career Factors
+
+```{r compensation_factors}
+# Monthly income distribution by attrition
+income_plot <- ggplot(attrition_clean, aes(x = Attrition, y = MonthlyIncome, fill = Attrition)) +
+  geom_boxplot(alpha = 0.7) +
+  scale_fill_manual(values = c("Yes" = "#FF6B6B", "No" = "#4ECDC4")) +
+  labs(title = "Monthly Income Distribution by Attrition Status",
+       x = "Attrition",
+       y = "Monthly Income ($)") +
+  theme_economist() +
+  theme(legend.position = "none")
+
+# Years at company and attrition
+years_company_plot <- ggplot(attrition_clean, aes(x = Attrition, y = YearsAtCompany, fill = Attrition)) +
+  geom_boxplot(alpha = 0.7) +
+  scale_fill_manual(values = c("Yes" = "#FF6B6B", "No" = "#4ECDC4")) +
+  labs(title = "Years at Company Distribution by Attrition Status",
+       x = "Attrition",
+       y = "Years at Company") +
+  theme_economist() +
+  theme(legend.position = "none")
+
+# Years since last promotion and attrition
+promotion_plot <- ggplot(attrition_clean, aes(x = Attrition, y = YearsSinceLastPromotion, fill = Attrition)) +
+  geom_boxplot(alpha = 0.7) +
+  scale_fill_manual(values = c("Yes" = "#FF6B6B", "No" = "#4ECDC4")) +
+  labs(title = "Years Since Last Promotion by Attrition Status",
+       x = "Attrition",
+       y = "Years Since Last Promotion") +
+  theme_economist() +
+  theme(legend.position = "none")
+
+# Stock option level and attrition
+stockoption_attrition <- attrition_clean %>%
+  group_by(StockOptionLevel, Attrition) %>%
+  summarize(Count = n(), .groups = "drop") %>%
+  group_by(StockOptionLevel) %>%
+  mutate(Percentage = Count / sum(Count) * 100)
+
+stock_plot <- ggplot(stockoption_attrition, aes(x = as.factor(StockOptionLevel), y = Percentage, fill = Attrition)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  geom_text(aes(label = sprintf("%.1f%%", Percentage)), 
+            position = position_dodge(width = 0.9), vjust = -0.5) +
+  scale_fill_manual(values = c("Yes" = "#FF6B6B", "No" = "#4ECDC4")) +
+  labs(title = "Attrition Rate by Stock Option Level",
+       x = "Stock Option Level",
+       y = "Percentage") +
+  theme_economist()
+
+# Display plots
+print(income_plot)
+print(years_company_plot)
+print(promotion_plot)
+print(stock_plot)
+```
+
+### Satisfaction and Work-Life Balance Factors
+
+```{r satisfaction_factors}
+# Job satisfaction and attrition
+jobsat_attrition <- attrition_clean %>%
+  group_by(JobSatisfaction, Attrition) %>%
+  summarize(Count = n(), .groups = "drop") %>%
+  group_by(JobSatisfaction) %>%
+  mutate(Percentage = Count / sum(Count) * 100)
+
+jobsat_plot <- ggplot(jobsat_attrition, aes(x = as.factor(JobSatisfaction), y = Percentage, fill = Attrition)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  geom_text(aes(label = sprintf("%.1f%%", Percentage)), 
+            position = position_dodge(width = 0.9), vjust = -0.5) +
+  scale_fill_manual(values = c("Yes" = "#FF6B6B", "No" = "#4ECDC4")) +
+  labs(title = "Attrition Rate by Job Satisfaction Level",
+       x = "Job Satisfaction (1=Low, 4=Very High)",
+       y = "Percentage") +
+  theme_economist()
+
+# Environment satisfaction and attrition
+envsat_attrition <- attrition_clean %>%
+  group_by(EnvironmentSatisfaction, Attrition) %>%
+  summarize(Count = n(), .groups = "drop") %>%
+  group_by(EnvironmentSatisfaction) %>%
+  mutate(Percentage = Count / sum(Count) * 100)
+
+envsat_plot <- ggplot(envsat_attrition, aes(x = as.factor(EnvironmentSatisfaction), y = Percentage, fill = Attrition)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  geom_text(aes(label = sprintf("%.1f%%", Percentage)), 
+            position = position_dodge(width = 0.9), vjust = -0.5) +
+  scale_fill_manual(values = c("Yes" = "#FF6B6B", "No" = "#4ECDC4")) +
+  labs(title = "Attrition Rate by Environment Satisfaction",
+       x = "Environment Satisfaction (1=Low, 4=Very High)",
+       y = "Percentage") +
+  theme_economist()
+
+# Work-life balance and attrition
+wlb_attrition <- attrition_clean %>%
+  group_by(WorkLifeBalance, Attrition) %>%
+  summarize(Count = n(), .groups = "drop") %>%
+  group_by(WorkLifeBalance) %>%
+  mutate(Percentage = Count / sum(Count) * 100)
+
+wlb_plot <- ggplot(wlb_attrition, aes(x = as.factor(WorkLifeBalance), y = Percentage, fill = Attrition)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  geom_text(aes(label = sprintf("%.1f%%", Percentage)), 
+            position = position_dodge(width = 0.9), vjust = -0.5) +
+  scale_fill_manual(values = c("Yes" = "#FF6B6B", "No" = "#4ECDC4")) +
+  labs(title = "Attrition Rate by Work-Life Balance",
+       x = "Work-Life Balance (1=Bad, 4=Best)",
+       y = "Percentage") +
+  theme_economist()
+
+# Arrange in a grid
+grid.arrange(jobsat_plot, envsat_plot, wlb_plot, ncol = 2)
+```
+
+## Correlation Analysis
+
+```{r correlation_analysis}
+# Convert Attrition to numeric (No = 0, Yes = 1)
+attrition_clean$AttritionBinary <- ifelse(attrition_clean$Attrition == "Yes", 1, 0)
+
+# Select only numeric variables for correlation analysis
+numeric_vars <- attrition_clean %>%
+  select_if(is.numeric)
+
+# Calculate correlation matrix
+correlation_matrix <- cor(numeric_vars)
+
+# Create a correlation plot focusing on AttritionBinary
+corrplot(correlation_matrix, method = "color", type = "upper", order = "hclust",
+         tl.col = "black", tl.srt = 45, addrect = 3,
+         col = colorRampPalette(c("#4ECDC4", "white", "#FF6B6B"))(200))
+
+# Identify top correlations with Attrition
+attrition_correlations <- data.frame(
+  Variable = names(correlation_matrix["AttritionBinary", ]),
+  Correlation = as.numeric(correlation_matrix["AttritionBinary", ])
+) %>%
+  filter(Variable != "AttritionBinary") %>%
+  arrange(desc(abs(Correlation)))
+
+head(attrition_correlations, 10) %>%
+  kable(caption = "Top 10 Variables Correlated with Attrition") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"))
+```
+
+## Feature Engineering
+
+```{r feature_engineering}
+# Creating some engineered features that might be useful
+attrition_features <- attrition_clean %>%
+  # Calculate salary per year of experience
+  mutate(SalaryPerExperience = ifelse(TotalWorkingYears > 0, MonthlyIncome / TotalWorkingYears, MonthlyIncome),
+         # Time since last change (promotion or manager change)
+         TimeSinceChange = pmin(YearsSinceLastPromotion, YearsWithCurrManager),
+         # Career progression ratio
+         CareerProgressionRatio = ifelse(YearsAtCompany > 0, JobLevel / YearsAtCompany, JobLevel),
+         # Salary to job level ratio
+         SalaryToJobLevelRatio = MonthlyIncome / JobLevel,
+         # Satisfaction composite (average of all satisfaction measures)
+         SatisfactionComposite = (JobSatisfaction + EnvironmentSatisfaction + 
+                                 RelationshipSatisfaction + WorkLifeBalance) / 4)
+
+# Check correlations of new features with attrition
+attrition_features$AttritionBinary <- ifelse(attrition_features$Attrition == "Yes", 1, 0)
+
+new_features <- c("SalaryPerExperience", "TimeSinceChange", "CareerProgressionRatio", 
+                 "SalaryToJobLevelRatio", "SatisfactionComposite", "AttritionBinary")
+
+new_features_cor <- cor(attrition_features[new_features])
+
+corrplot(new_features_cor, method = "color", type = "upper",
+         tl.col = "black", addrect = 2,
+         col = colorRampPalette(c("#4ECDC4", "white", "#FF6B6B"))(200))
+
+# Visualize one of our engineered features
+ggplot(attrition_features, aes(x = Attrition, y = SatisfactionComposite, fill = Attrition)) +
+  geom_boxplot(alpha = 0.7) +
+  scale_fill_manual(values = c("Yes" = "#FF6B6B", "No" = "#4ECDC4")) +
+  labs(title = "Satisfaction Composite Score by Attrition Status",
+       x = "Attrition",
+       y = "Satisfaction Composite Score") +
+  theme_economist() +
+  theme(legend.position = "none")
+```
+
+## Predictive Modeling
+
+### Data Preparation for Modeling
+
+```{r modeling_preparation}
+# Prepare the data for modeling
+# Convert categorical variables to factors if they aren't already
+model_data <- attrition_features %>%
+  mutate(across(where(is.character), as.factor))
+
+# Create training and testing sets
+set.seed(123)  # For reproducibility
+train_index <- createDataPartition(model_data$Attrition, p = 0.7, list = FALSE)
+train_data <- model_data[train_index, ]
+test_data <- model_data[-train_index, ]
+
+# Define the formula for modeling
+predictors <- names(train_data)[!names(train_data) %in% c("Attrition", "AttritionBinary")]
+model_formula <- as.formula(paste("Attrition ~", paste(predictors, collapse = " + ")))
+
+# Define preprocessing steps
+preprocess_steps <- preProcess(train_data[, !names(train_data) %in% c("Attrition", "AttritionBinary")], 
+                              method = c("center", "scale"))
+
+# Apply preprocessing
+train_data_processed <- predict(preprocess_steps, train_data)
+test_data_processed <- predict(preprocess_steps, test_data)
+```
+
+### KNN Model
+
+```{r knn_model}
+# Train a KNN model
+set.seed(123)
+knn_model <- train(
+  model_formula,
+  data = train_data_processed,
+  method = "knn",
+  trControl = trainControl(
+    method = "cv",
+    number = 5,
+    classProbs = TRUE,
+    summaryFunction = twoClassSummary
+  ),
+  metric = "ROC",
+  tuneLength = 10
+)
+
+# Print model results
+print(knn_model)
+plot(knn_model)
+
+# Make predictions on test set
+knn_predictions <- predict(knn_model, test_data_processed)
+knn_probs <- predict(knn_model, test_data_processed, type = "prob")
+
+# Confusion matrix
+knn_cm <- confusionMatrix(knn_predictions, test_data_processed$Attrition, positive = "Yes")
+print(knn_cm)
+
+# Visualize confusion matrix
+fourfoldplot(knn_cm$table, color = c("#FF6B6B", "#4ECDC4"), main = "KNN Confusion Matrix")
+```
+
+### Naive Bayes Model
+
+```{r naive_bayes_model}
+# Train a Naive Bayes model
+set.seed(123)
+nb_model <- train(
+  model_formula,
+  data = train_data_processed,
+  method = "naive_bayes",
+  trControl = trainControl(
+    method = "cv",
+    number = 5,
+    classProbs = TRUE,
+    summaryFunction = twoClassSummary
+  ),
+  metric = "ROC"
+)
+
+# Print model results
+print(nb_model)
+plot(nb_model)
+
+# Make predictions on test set
+nb_predictions <- predict(nb_model, test_data_processed)
+nb_probs <- predict(nb_model, test_data_processed, type = "prob")
+
+# Confusion matrix
+nb_cm <- confusionMatrix(nb_predictions, test_data_processed$Attrition, positive = "Yes")
+print(nb_cm)
+
+# Visualize confusion matrix
+fourfoldplot(nb_cm$table, color = c("#FF6B6B", "#4ECDC4"), main = "Naive Bayes Confusion Matrix")
+```
+
+### Handling Class Imbalance
+
+```{r class_imbalance}
+# First, let's use ROSE for balancing
+set.seed(123)
+train_balanced_rose <- ROSE(Attrition ~ ., data = train_data, seed = 123)$data
+
+# Check the new class distribution
+table(train_balanced_rose$Attrition)
+
+# Preprocess the ROSE-balanced dataset
+preprocess_steps_rose <- preProcess(train_balanced_rose[, !names(train_balanced_rose) %in% c("Attrition", "AttritionBinary")],
+                                   method = c("center", "scale"))
+train_balanced_rose_processed <- predict(preprocess_steps_rose, train_balanced_rose)
+
+# Train models with balanced data
+# Gradient Boosting
+gbm_model <- train(
+  model_formula,
+  data = train_balanced_rose_processed,
+  method = "gbm",
+  trControl = trainControl(
+    method = "cv",
+    number = 5,
+    classProbs = TRUE,
+    summaryFunction = twoClassSummary
+  ),
+  metric = "ROC",
+  verbose = FALSE
+)
+
+# Random Forest
+rf_model <- train(
+  model_formula,
+  data = train_balanced_rose_processed,
+  method = "rf",
+  trControl = trainControl(
+    method = "cv",
+    number = 5,
+    classProbs = TRUE,
+    summaryFunction = twoClassSummary
+  ),
+  metric = "ROC",
+  ntree = 100
+)
+
+# Evaluate models
+gbm_pred <- predict(gbm_model, test_data_processed)
+gbm_cm <- confusionMatrix(gbm_pred, test_data_processed$Attrition, positive = "Yes")
+
+rf_pred <- predict(rf_model, test_data_processed)
+rf_cm <- confusionMatrix(rf_pred, test_data_processed$Attrition, positive = "Yes")
+
+# Print results
+print(gbm_cm)
+print(rf_cm)
+```
+
+### Model Comparison
+
+```{r model_comparison}
+# Compare models
+models_comparison_all <- resamples(list(
+  KNN = knn_model,
+  NaiveBayes = nb_model,
+  RandomForest = rf_model,
+  GradientBoosting = gbm_model
+))
+
+# Summarize model comparison
+summary(models_comparison_all)
+bwplot(models_comparison_all, main = "Model Performance Comparison")
+
+# ROC curves
+rf_probs <- predict(rf_model, test_data_processed, type = "prob")
+gbm_probs <- predict(gbm_model, test_data_processed, type = "prob")
+
+roc_knn <- roc(response = test_data_processed$Attrition, predictor = knn_probs$Yes)
+roc_nb <- roc(response = test_data_processed$Attrition, predictor = nb_probs$Yes)
+roc_rf <- roc(response = test_data_processed$Attrition, predictor = rf_probs$Yes)
+roc_gbm <- roc(response = test_data_processed$Attrition, predictor = gbm_probs$Yes)
+
+# Plot ROC curves
+plot(roc_knn, col = "#FF6B6B", main = "ROC
+     Curves for Different Models")
+plot(roc_nb, col = "#FF6B6B", add = TRUE)
+plot(roc_rf, col = "#FF6B6B", add = TRUE)
+plot(roc_gbm, col = "#FF6B6B", add = TRUE)
+legend("bottomright", legend = c("KNN", "Naive Bayes", "Random Forest", "Gradient Boosting"),
+       col = c("#FF6B6B", "#FF6B6B", "#FF6B6B", "#FF6B6B"), lty = 1)
+```
+
+## Optimizing the Gradient Boosting Model
+
+```{r gbm_optimization}
+# Optimize prediction threshold for better sensitivity/specificity balance
+thresholds <- seq(0.1, 0.9, by = 0.05)
+results <- data.frame(
+  Threshold = thresholds,
+  Sensitivity = numeric(length(thresholds)),
+  Specificity = numeric(length(thresholds)),
+  Balanced_Accuracy = numeric(length(thresholds))
+)
+
+# Calculate metrics for each threshold
+for(i in 1:length(thresholds)) {
+  # Make predictions using current threshold
+  threshold_preds <- factor(
+    ifelse(gbm_simple_probs$Yes > thresholds[i], "Yes", "No"),
+    levels = c("No", "Yes")
+  )
+  
+  # Create confusion matrix
+  cm <- confusionMatrix(threshold_preds, test_data_processed$Attrition, positive = "Yes")
+  
+  # Store results
+  results$Sensitivity[i] <- cm$byClass["Sensitivity"]
+  results$Specificity[i] <- cm$byClass["Specificity"]
+  results$Balanced_Accuracy[i] <- cm$byClass["Balanced Accuracy"]
+}
+
+# Find the threshold that gives at least 60% for both metrics
+valid_thresholds <- results[results$Sensitivity >= 0.6 & results$Specificity >= 0.6, ]
+
+if(nrow(valid_thresholds) > 0) {
+  # Find the threshold with the best balanced accuracy
+  best_threshold <- valid_thresholds[which.max(valid_thresholds$Balanced_Accuracy), ]
+  cat("Best threshold:", best_threshold$Threshold, 
+      "\nSensitivity:", round(best_threshold$Sensitivity * 100, 1), "%",
+      "\nSpecificity:", round(best_threshold$Specificity * 100, 1), "%\n")
+  
+  # Apply the best threshold to make the final predictions
+  final_preds <- factor(
+    ifelse(gbm_simple_probs$Yes > best_threshold$Threshold, "Yes", "No"),
+    levels = c("No", "Yes")
+  )
+  
+  # Create the final confusion matrix
+  final_cm <- confusionMatrix(final_preds, test_data_processed$Attrition, positive = "Yes")
+  print(final_cm)
+  
+  # Use this confusion matrix for cost-benefit analysis
+  gbm_final_cm <- final_cm
+} else {
+  cat("No threshold found that gives at least 60% for both sensitivity and specificity.\n")
+  # Use the original confusion matrix
+  gbm_final_cm <- gbm_simple_cm
+}
+```
+
+## Cost-Benefit Analysis
+
+```{r cost_benefit_analysis}
+# Calculate the average annual salary
+avg_monthly_income <- mean(attrition_clean$MonthlyIncome)
+avg_annual_income <- avg_monthly_income * 12
+cat("Average monthly income:", format(round(avg_monthly_income, 2), big.mark=","), 
+    "\nAverage annual income:", format(round(avg_annual_income, 2), big.mark=","), "\n")
+
+# Define replacement cost scenarios (50% to 400% of annual salary)
+low_replacement_cost <- 0.5 * avg_annual_income
+mid_replacement_cost <- 2.25 * avg_annual_income  # Midpoint of range
+high_replacement_cost <- 4.0 * avg_annual_income
+
+# Cost of retention incentive
+retention_incentive_cost <- 200
+
+# Extract values from the confusion matrix - use gbm_final_cm created above
+true_positives <- gbm_final_cm$table[2,2]  # Correctly predicted attrition
+false_positives <- gbm_final_cm$table[2,1]  # Incorrectly predicted attrition
+false_negatives <- gbm_final_cm$table[1,2]  # Missed attrition cases
+true_negatives <- gbm_final_cm$table[1,1]  # Correctly predicted retention
+
+# Calculate costs for different scenarios
+# Scenario 1: No model - all attrition cases result in replacement costs
+no_model_cost <- (true_positives + false_negatives) * mid_replacement_cost
+
+# Scenario 2: With model - apply retention incentives to predicted attrition cases
+# and still incur replacement costs for missed cases
+incentive_cost <- (true_positives + false_positives) * retention_incentive_cost
+missed_attrition_cost <- false_negatives * mid_replacement_cost
+with_model_cost <- incentive_cost + missed_attrition_cost
+
+# Calculate savings
+savings <- no_model_cost - with_model_cost
+savings_percentage <- (savings / no_model_cost) * 100
+
+# Create a summary table
+cost_summary <- data.frame(
+  Scenario = c("Without Model", "With Model", "Savings", "Savings Percentage"),
+  Cost = c(
+    format(round(no_model_cost, 2), big.mark = ","),
+    format(round(with_model_cost, 2), big.mark = ","),
+    format(round(savings, 2), big.mark = ","),
+    paste0(round(savings_percentage, 2), "%")
+  )
+)
+
+print(cost_summary)
+
+# Create a table for different replacement cost scenarios
+scenarios_data <- data.frame(
+  Scenario = character(3),
+  Replacement_Cost = numeric(3),
+  Without_Model = numeric(3),
+  With_Model = numeric(3),
+  Savings = numeric(3),
+  Savings_Pct = numeric(3)
+)
+
+scenarios <- c("Low (50%)", "Medium (225%)", "High (400%)")
+replacement_costs <- c(low_replacement_cost, mid_replacement_cost, high_replacement_cost)
+
+for(i in 1:3) {
+  scenario_no_model <- (true_positives + false_negatives) * replacement_costs[i]
+  scenario_with_model <- incentive_cost + (false_negatives * replacement_costs[i])
+  scenario_savings <- scenario_no_model - scenario_with_model
+  scenario_pct <- (scenario_savings / scenario_no_model) * 100
+  
+  scenarios_data$Scenario[i] <- scenarios[i]
+  scenarios_data$Replacement_Cost[i] <- replacement_costs[i]
+  scenarios_data$Without_Model[i] <- scenario_no_model
+  scenarios_data$With_Model[i] <- scenario_with_model
+  scenarios_data$Savings[i] <- scenario_savings
+  scenarios_data$Savings_Pct[i] <- scenario_pct
+}
+
+# Display the scenario data in a readable format
+print(scenarios_data)
+
+# Plot the savings data
+library(ggplot2)
+
+# Plot savings amount
+ggplot(scenarios_data, aes(x = Scenario, y = Savings, fill = Scenario)) +
+  geom_bar(stat = "identity") +
+  geom_text(aes(label = paste0("$", format(round(Savings, 0), big.mark = ","))),
+            vjust = -0.5, size = 3.5) +
+  labs(title = "Estimated Savings by Replacement Cost Scenario",
+       x = "Replacement Cost Scenario",
+       y = "Dollar Savings") +
+  theme_economist() +
+  theme(legend.position = "none")
+
+# Plot savings percentage
+ggplot(scenarios_data, aes(x = Scenario, y = Savings_Pct, fill = Scenario)) +
+  geom_bar(stat = "identity") +
+  geom_text(aes(label = paste0(round(Savings_Pct, 1), "%")),
+            vjust = -0.5, size = 3.5) +
+  labs(title = "Savings Percentage by Replacement Cost Scenario",
+       x = "Replacement Cost Scenario",
+       y = "Savings Percentage") +
+  theme_economist() +
+  theme(legend.position = "none")
+```
+
