@@ -455,7 +455,7 @@ dept_plot <- ggplot(dept_attrition, aes(x = Department, y = Percentage, fill = A
        x = "Department",
        y = "Percentage") +
   theme_economist() +
-  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+  theme(axis.text.x = element_text(angle = 45, hjust = .025))
 
 # Job role and attrition (using a sorted bar plot for better readability)
 jobrole_attrition <- attrition_clean %>%
@@ -669,11 +669,23 @@ wlb_plot <- ggplot(wlb_attrition, aes(x = as.factor(WorkLifeBalance), y = Percen
        y = "Percentage") +
   theme_economist()
 
-# Arrange in a grid
-grid.arrange(jobsat_plot, envsat_plot, wlb_plot, ncol = 2)
+# Display plots
+print(jobsat_plot)
 ```
 
 ![](DS-6306_Project_Jonathan_Rocha_files/figure-html/satisfaction_factors-1.png)<!-- -->
+
+``` r
+print(envsat_plot)
+```
+
+![](DS-6306_Project_Jonathan_Rocha_files/figure-html/satisfaction_factors-2.png)<!-- -->
+
+``` r
+print(wlb_plot)
+```
+
+![](DS-6306_Project_Jonathan_Rocha_files/figure-html/satisfaction_factors-3.png)<!-- -->
 
 ## Correlation Analysis
 
