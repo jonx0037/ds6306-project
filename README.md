@@ -67,8 +67,8 @@ Employees with fewer total working years (less overall work experience) demonstr
 ## Model Performance
 
 Our final gradient boosting model achieved:
-- **Sensitivity:** 67.2% (ability to identify employees who will leave)
-- **Specificity:** 65.3% (ability to identify employees who will stay)
+- **Sensitivity:** 61.9% (ability to identify employees who will leave)
+- **Specificity:** 62.3% (ability to identify employees who will stay)
 - **Accuracy:** 65.8% (overall correct predictions)
 
 This performance exceeds the required thresholds of 60% for both sensitivity and specificity.
