@@ -19,3 +19,12 @@
 # Temporary files
 *.tmp
 *~
+
+# Large files
+*.mp4
+*.pptx
+*.mov
+*.avi
+*.zip
+*.tar.gz
+# Any file larger than 100MB should not be tracked by Git
